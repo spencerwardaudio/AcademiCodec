@@ -30,6 +30,11 @@ from academicodec.utils import scan_checkpoint
 from academicodec.utils import load_checkpoint
 from academicodec.utils import save_checkpoint
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 torch.backends.cudnn.benchmark = True
 
 
@@ -190,6 +195,30 @@ def train(rank, a, h):
             pin_memory=True,
             drop_last=True)
         sw = SummaryWriter(os.path.join(a.checkpoint_path, 'logs'))
+        wandb_run = None
+        wandb_project = a.wandb_project or os.environ.get('WANDB_PROJECT')
+        wandb_name = a.wandb_name or os.environ.get('WANDB_NAME')
+        wandb_entity = a.wandb_entity or os.environ.get('WANDB_ENTITY')
+        if a.wandb or wandb_project:
+            if wandb is None:
+                raise ImportError(
+                    'wandb logging requested but wandb is not installed. Install with: pip install wandb'
+                )
+            wandb_run = wandb.init(
+                project=wandb_project or 'hificodec-fsd50k',
+                name=wandb_name,
+                entity=wandb_entity,
+                mode=a.wandb_mode,
+                config={
+                    'config_path': a.config,
+                    'training_epochs': a.training_epochs,
+                    'checkpoint_interval': a.checkpoint_interval,
+                    'summary_interval': a.summary_interval,
+                    'validation_interval': a.validation_interval,
+                    'checkpoint_path': a.checkpoint_path,
+                })
+    else:
+        wandb_run = None
     plot_gt_once = False
     generator.train()
     encoder.train()
@@ -335,6 +364,13 @@ def train(rank, a, h):
                     sw.add_scalar("training/gen_loss_total", loss_gen_all,
                                   steps)
                     sw.add_scalar("training/mel_spec_error", mel_error, steps)
+                    if wandb_run is not None:
+                        wandb.log({
+                            'training/gen_loss_total': float(loss_gen_all.item()),
+                            'training/mel_spec_error': float(mel_error),
+                            'training/loss_q': float(loss_q.item()),
+                            'epoch': int(epoch + 1),
+                        }, step=steps)
 
                 # Validation
                 if steps % a.validation_interval == 0 and steps != 0:
@@ -382,6 +418,11 @@ def train(rank, a, h):
                         val_err = val_err_tot / (j + 1)
                         sw.add_scalar("validation/mel_spec_error", val_err,
                                       steps)
+                        if wandb_run is not None:
+                            wandb.log({
+                                'validation/mel_spec_error': float(val_err),
+                                'epoch': int(epoch + 1),
+                            }, step=steps)
                         if not plot_gt_once:
                             plot_gt_once = True
 
@@ -395,6 +436,9 @@ def train(rank, a, h):
         if rank == 0:
             print('Time taken for epoch {} is {} sec\n'.format(
                 epoch + 1, int(time.time() - start)))
+
+    if rank == 0 and wandb_run is not None:
+        wandb_run.finish()
 
 
 def main():
@@ -416,6 +460,11 @@ def main():
     parser.add_argument('--validation_interval', default=5000, type=int)
     parser.add_argument('--num_ckpt_keep', default=5, type=int)
     parser.add_argument('--fine_tuning', default=False, type=bool)
+    parser.add_argument('--wandb', action='store_true')
+    parser.add_argument('--wandb_project', default=None)
+    parser.add_argument('--wandb_name', default=None)
+    parser.add_argument('--wandb_entity', default=None)
+    parser.add_argument('--wandb_mode', default='online')
 
     a = parser.parse_args()
 
