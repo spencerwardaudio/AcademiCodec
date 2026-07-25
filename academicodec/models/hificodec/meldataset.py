@@ -220,5 +220,5 @@ class MelDataset(torch.utils.data.Dataset):
         return (mel.squeeze(), audio.squeeze(0), filename, mel_loss.squeeze())
 
     def __len__(self):
-        # Limit to 1010 steps × 8 batch = 8,080 samples/epoch (fast training mode)
-        return min(len(self.audio_files), 8080)
+        # Limited training: 1000 steps × 12 batch = 12,000 samples/epoch (37% of dataset)
+        return min(len(self.audio_files), 12000)
