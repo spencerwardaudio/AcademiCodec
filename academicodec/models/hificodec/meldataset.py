@@ -220,5 +220,6 @@ class MelDataset(torch.utils.data.Dataset):
         return (mel.squeeze(), audio.squeeze(0), filename, mel_loss.squeeze())
 
     def __len__(self):
-        # Limited training: 1000 steps × 12 batch = 12,000 samples/epoch (37% of dataset)
+        # Limited training: 1500 steps × 8 batch = 12,000 samples/epoch (37% of dataset)
+        # Note: HiFiCodec uses batch_size=8 due to MSSTFTD discriminator memory requirements
         return min(len(self.audio_files), 12000)
