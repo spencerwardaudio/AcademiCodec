@@ -185,7 +185,8 @@ def train(rank, a, h):
             fmax_loss=h.fmax_for_loss,
             device=device,
             fine_tuning=a.fine_tuning,
-            base_mels_path=a.input_mels_dir)
+            base_mels_path=a.input_mels_dir,
+            valid=True)
         validation_loader = DataLoader(
             validset,
             num_workers=1,

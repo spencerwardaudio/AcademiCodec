@@ -117,7 +117,8 @@ class MelDataset(torch.utils.data.Dataset):
                  device=None,
                  fmax_loss=None,
                  fine_tuning=False,
-                 base_mels_path=None):
+                 base_mels_path=None,
+                 valid=False):
         self.audio_files = training_files
         random.seed(1234)
         if shuffle:
@@ -138,6 +139,7 @@ class MelDataset(torch.utils.data.Dataset):
         self.device = device
         self.fine_tuning = fine_tuning
         self.base_mels_path = base_mels_path
+        self.valid = valid
 
     def __getitem__(self, index):
         filename = self.audio_files[index]
@@ -221,5 +223,6 @@ class MelDataset(torch.utils.data.Dataset):
         return (mel.squeeze(), audio.squeeze(0), filename, mel_loss.squeeze())
 
     def __len__(self):
-        n = int(os.getenv("TRAIN_N_SAMPLES", 12000))
+        env_key = "VAL_N_SAMPLES" if self.valid else "TRAIN_N_SAMPLES"
+        n = int(os.getenv(env_key, 12000))
         return min(len(self.audio_files), n)
