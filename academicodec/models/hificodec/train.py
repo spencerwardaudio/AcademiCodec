@@ -217,6 +217,9 @@ def train(rank, a, h):
                     'validation_interval': a.validation_interval,
                     'checkpoint_path': a.checkpoint_path,
                 })
+            wandb.define_metric("epoch")
+            wandb.define_metric("training/*", step_metric="epoch")
+            wandb.define_metric("validation/*", step_metric="epoch")
     else:
         wandb_run = None
     plot_gt_once = False
