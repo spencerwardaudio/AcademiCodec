@@ -2,10 +2,19 @@
 # 主要是 prob > 0.7 的时候多了 ans2
 import glob
 import random
+import sys
+from pathlib import Path
 
 import torch
 import torchaudio
 from torch.utils.data import Dataset
+
+# Add project root to path for shared utilities
+_PROJ_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+if str(_PROJ_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJ_ROOT))
+
+from datasets.audio_preprocessing import normalize_rms_snr
 
 
 class NSynthDataset(Dataset):
@@ -45,6 +54,15 @@ class NSynthDataset(Dataset):
             else:
                 ans2[:, :audio2.shape[1]] = audio2
             ans = ans1 + ans2
+            
+            # Apply RMS/SNR normalization after mixing
+            ans = normalize_rms_snr(
+                ans,
+                target_snr_db=40.0,
+                train_mode=True,
+                snr_variation_db=5.0
+            )
+            
             return ans
         else:
             ans = torch.zeros(1, self.max_len)
@@ -52,7 +70,16 @@ class NSynthDataset(Dataset):
             if audio.shape[1] > self.max_len:
                 st = random.randint(0, audio.shape[1] - self.max_len - 1)
                 ed = st + self.max_len
-                return audio[:, st:ed]
+                ans = audio[:, st:ed]
             else:
                 ans[:, :audio.shape[1]] = audio
-                return ans
+            
+            # Apply RMS/SNR normalization
+            ans = normalize_rms_snr(
+                ans,
+                target_snr_db=40.0,
+                train_mode=True,
+                snr_variation_db=5.0
+            )
+            
+            return ans
