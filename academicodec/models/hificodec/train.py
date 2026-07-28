@@ -233,6 +233,9 @@ def train(rank, a, h):
         if rank == 0:
             start = time.time()
             print("Epoch: {}".format(epoch + 1))
+            # Initialize epoch metrics tracking
+            from collections import defaultdict
+            epoch_metrics = defaultdict(list)
         if h.num_gpus > 1:
             train_sampler.set_epoch(epoch)
         for i, batch in enumerate(train_loader):
@@ -321,10 +324,26 @@ def train(rank, a, h):
             loss_gen_all.backward()
             optim_g.step()
             if rank == 0:
+                # Track metrics for epoch aggregation
+                with torch.no_grad():
+                    mel_error = F.l1_loss(y_mel, y_g_hat_mel).item()
+                epoch_metrics['gen_loss_total'].append(loss_gen_all.item())
+                epoch_metrics['disc_loss_total'].append(loss_disc_all.item())
+                epoch_metrics['disc_loss_mpd'].append(loss_disc_f.item())
+                epoch_metrics['disc_loss_msd'].append(loss_disc_s.item())
+                epoch_metrics['disc_loss_mstftd'].append(loss_disc_stft.item())
+                epoch_metrics['gen_adv_mpd'].append(loss_gen_f.item())
+                epoch_metrics['gen_adv_msd'].append(loss_gen_s.item())
+                epoch_metrics['gen_adv_mstftd'].append(loss_gen_stft.item())
+                epoch_metrics['fm_loss_mpd'].append(loss_fm_f.item())
+                epoch_metrics['fm_loss_msd'].append(loss_fm_s.item())
+                epoch_metrics['fm_loss_mstftd'].append(loss_fm_stft.item())
+                epoch_metrics['mel_loss'].append(loss_mel.item())
+                epoch_metrics['mel_spec_error'].append(mel_error)
+                epoch_metrics['loss_q'].append(loss_q.item())
+                
                 # STDOUT logging
                 if steps % a.stdout_interval == 0:
-                    with torch.no_grad():
-                        mel_error = F.l1_loss(y_mel, y_g_hat_mel).item()
                     print(
                         'Steps : {:d}, Gen Loss Total : {:4.3f}, Loss Q : {:4.3f}, Mel-Spec. Error : {:4.3f}, s/b : {:4.3f}'.
                         format(steps, loss_gen_all, loss_q, mel_error,
@@ -370,9 +389,34 @@ def train(rank, a, h):
                     sw.add_scalar("training/mel_spec_error", mel_error, steps)
                     if wandb_run is not None:
                         wandb.log({
+                            # Aggregated losses
                             'training/gen_loss_total': float(loss_gen_all.item()),
+                            'training/disc_loss_total': float(loss_disc_all.item()),
+                            
+                            # Discriminator breakdown
+                            'training/disc_loss_mpd': float(loss_disc_f.item()),
+                            'training/disc_loss_msd': float(loss_disc_s.item()),
+                            'training/disc_loss_mstftd': float(loss_disc_stft.item()),
+                            
+                            # Generator adversarial
+                            'training/gen_adv_mpd': float(loss_gen_f.item()),
+                            'training/gen_adv_msd': float(loss_gen_s.item()),
+                            'training/gen_adv_mstftd': float(loss_gen_stft.item()),
+                            
+                            # Feature matching
+                            'training/fm_loss_mpd': float(loss_fm_f.item()),
+                            'training/fm_loss_msd': float(loss_fm_s.item()),
+                            'training/fm_loss_mstftd': float(loss_fm_stft.item()),
+                            
+                            # Reconstruction
+                            'training/mel_loss': float(loss_mel.item()),
                             'training/mel_spec_error': float(mel_error),
                             'training/loss_q': float(loss_q.item()),
+                            
+                            # Learning rates
+                            'training/lr_generator': float(optim_g.param_groups[0]['lr']),
+                            'training/lr_discriminator': float(optim_d.param_groups[0]['lr']),
+                            
                             'epoch': int(epoch + 1),
                         }, step=steps)
 
@@ -381,8 +425,16 @@ def train(rank, a, h):
                     generator.eval()
                     encoder.eval()
                     quantizer.eval()
+                    mpd.eval()
+                    msd.eval()
+                    mstftd.eval()
                     torch.cuda.empty_cache()
                     val_err_tot = 0
+                    val_gen_loss_tot = 0
+                    val_disc_loss_tot = 0
+                    val_fm_loss_tot = 0
+                    val_q_loss_tot = 0
+                    val_mel_loss_tot = 0
                     with torch.no_grad():
                         for j, batch in enumerate(validation_loader):
                             x, y, _, y_mel = batch
@@ -395,9 +447,44 @@ def train(rank, a, h):
                                 h.sampling_rate, h.hop_size, h.win_size, h.fmin,
                                 h.fmax_for_loss)
                             i_size = min(y_mel.size(2), y_g_hat_mel.size(2))
-                            val_err_tot += F.l1_loss(
+                            mel_spec_error = F.l1_loss(
                                 y_mel[:, :, :i_size],
-                                y_g_hat_mel[:, :, :i_size]).item()
+                                y_g_hat_mel[:, :, :i_size])
+                            val_err_tot += mel_spec_error.item()
+                            
+                            # Compute additional validation metrics
+                            # Discriminator outputs
+                            y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y.to(device).unsqueeze(1), y_g_hat.detach())
+                            y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y.to(device).unsqueeze(1), y_g_hat.detach())
+                            y_stft_hat_r, y_stft_hat_g, fmap_stft_r, fmap_stft_g = mstftd(y.to(device).unsqueeze(1), y_g_hat.detach())
+                            
+                            # Generator adversarial losses
+                            loss_gen_f, _ = generator_loss(y_df_hat_g)
+                            loss_gen_s, _ = generator_loss(y_ds_hat_g)
+                            loss_gen_stft, _ = generator_loss(y_stft_hat_g)
+                            
+                            # Feature matching losses
+                            loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
+                            loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
+                            loss_fm_stft = feature_loss(fmap_stft_r, fmap_stft_g)
+                            
+                            # Reconstruction losses
+                            loss_mel = mel_spec_error * 45
+                            
+                            # Discriminator losses
+                            loss_disc_f, _, _ = discriminator_loss(y_df_hat_r, y_df_hat_g)
+                            loss_disc_s, _, _ = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
+                            loss_disc_stft, _, _ = discriminator_loss(y_stft_hat_r, y_stft_hat_g)
+                            
+                            # Aggregate
+                            loss_gen_all = loss_gen_s + loss_gen_f + loss_gen_stft + loss_fm_s + loss_fm_f + loss_fm_stft + loss_mel + loss_q
+                            loss_disc_all = loss_disc_s + loss_disc_f + loss_disc_stft
+                            
+                            val_gen_loss_tot += loss_gen_all.item()
+                            val_disc_loss_tot += loss_disc_all.item()
+                            val_fm_loss_tot += (loss_fm_s + loss_fm_f + loss_fm_stft).item()
+                            val_q_loss_tot += loss_q.item()
+                            val_mel_loss_tot += loss_mel.item()
 
                             if j <= 8:
                                 # if steps == 0:
@@ -420,17 +507,36 @@ def train(rank, a, h):
                                     steps)
 
                         val_err = val_err_tot / (j + 1)
+                        val_gen_loss = val_gen_loss_tot / (j + 1)
+                        val_disc_loss = val_disc_loss_tot / (j + 1)
+                        val_fm_loss = val_fm_loss_tot / (j + 1)
+                        val_q_loss = val_q_loss_tot / (j + 1)
+                        val_mel_loss = val_mel_loss_tot / (j + 1)
+                        
                         sw.add_scalar("validation/mel_spec_error", val_err,
                                       steps)
+                        sw.add_scalar("validation/gen_loss_total", val_gen_loss, steps)
+                        sw.add_scalar("validation/disc_loss_total", val_disc_loss, steps)
+                        
                         if wandb_run is not None:
                             wandb.log({
                                 'validation/mel_spec_error': float(val_err),
+                                'validation/gen_loss_total': float(val_gen_loss),
+                                'validation/disc_loss_total': float(val_disc_loss),
+                                'validation/fm_loss_total': float(val_fm_loss),
+                                'validation/loss_q': float(val_q_loss),
+                                'validation/mel_loss': float(val_mel_loss),
                                 'epoch': int(epoch + 1),
                             }, step=steps)
                         if not plot_gt_once:
                             plot_gt_once = True
 
                     generator.train()
+                    encoder.train()
+                    quantizer.train()
+                    mpd.train()
+                    msd.train()
+                    mstftd.train()
 
             steps += 1
 
@@ -438,8 +544,34 @@ def train(rank, a, h):
         scheduler_d.step()
 
         if rank == 0:
-            print('Time taken for epoch {} is {} sec\n'.format(
-                epoch + 1, int(time.time() - start)))
+            # Compute epoch averages
+            epoch_summary = {}
+            for key, values in epoch_metrics.items():
+                if len(values) > 0:
+                    epoch_summary[key] = sum(values) / len(values)
+            
+            # Print formatted epoch summary
+            elapsed_time = int(time.time() - start)
+            print('\n' + '='*80)
+            print(f'EPOCH {epoch + 1} SUMMARY:')
+            print(f'  Gen Loss Total  : {epoch_summary.get("gen_loss_total", 0.0):.4f}')
+            print(f'  Disc Loss Total : {epoch_summary.get("disc_loss_total", 0.0):.4f}')
+            print(f'    ├─ MPD        : {epoch_summary.get("disc_loss_mpd", 0.0):.4f}')
+            print(f'    ├─ MSD        : {epoch_summary.get("disc_loss_msd", 0.0):.4f}')
+            print(f'    └─ MSSTFTD    : {epoch_summary.get("disc_loss_mstftd", 0.0):.4f}')
+            print(f'  Gen Adversarial : {(epoch_summary.get("gen_adv_mpd", 0.0) + epoch_summary.get("gen_adv_msd", 0.0) + epoch_summary.get("gen_adv_mstftd", 0.0)):.4f}')
+            print(f'  Feature Match   : {(epoch_summary.get("fm_loss_mpd", 0.0) + epoch_summary.get("fm_loss_msd", 0.0) + epoch_summary.get("fm_loss_mstftd", 0.0)):.4f}')
+            print(f'  Mel Loss        : {epoch_summary.get("mel_loss", 0.0):.4f}')
+            print(f'  Mel Spec Error  : {epoch_summary.get("mel_spec_error", 0.0):.4f}')
+            print(f'  Quantizer Loss  : {epoch_summary.get("loss_q", 0.0):.4f}')
+            print(f'  Time taken      : {elapsed_time} sec')
+            print('='*80 + '\n')
+            
+            # Log epoch summary to W&B
+            if wandb_run is not None:
+                log_dict = {f'epoch_summary/{k}': v for k, v in epoch_summary.items()}
+                log_dict['epoch'] = epoch + 1
+                wandb.log(log_dict, step=steps)
 
     if rank == 0 and wandb_run is not None:
         wandb_run.finish()

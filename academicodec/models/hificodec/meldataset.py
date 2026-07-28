@@ -2,11 +2,28 @@
 import math
 import os
 import random
+import sys
+from pathlib import Path
 
 import librosa
 import numpy as np
 import torch.utils.data
 from librosa.filters import mel as librosa_mel_fn
+
+# Add project root to path for shared utilities
+_PROJ_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+if str(_PROJ_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJ_ROOT))
+
+from dataloader_aug.audio_preprocessing import normalize_rms_snr
+from dataloader_aug.dataset_paths import get_dataset_config
+
+# Validate dataset paths on module load
+_dataset_config = get_dataset_config()
+assert _dataset_config.hificodec_train.exists(), \
+    f"❌ HiFiCodec training filelist missing: {_dataset_config.hificodec_train}"
+assert _dataset_config.hificodec_val.exists(), \
+    f"❌ HiFiCodec validation filelist missing: {_dataset_config.hificodec_val}"
 
 
 def load_wav(full_path, sr):
@@ -162,6 +179,16 @@ class MelDataset(torch.utils.data.Dataset):
 
         audio = torch.FloatTensor(audio)
         audio = audio.unsqueeze(0)
+
+        # Apply RMS/SNR normalization (preserves amplitude relationships)
+        audio = normalize_rms_snr(
+            audio,
+            target_snr_db=40.0,
+            train_mode=(not self.valid),
+            snr_variation_db=5.0,
+            audio_path=filename,
+            source_identifier="HiFiCodec/MelDataset"
+        )
 
         if not self.fine_tuning:
             if self.split:
