@@ -461,8 +461,7 @@ def train(rank, a, h):
                             # Discriminator outputs
                             y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y.to(device).unsqueeze(1), y_g_hat.detach())
                             y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y.to(device).unsqueeze(1), y_g_hat.detach())
-                            y_stft_hat_r, fmap_stft_r = mstftd(y.to(device).unsqueeze(1))
-                            y_stft_hat_g, fmap_stft_g = mstftd(y_g_hat.detach())
+                            y_stft_hat_r, y_stft_hat_g, fmap_stft_r, fmap_stft_g = mstftd(y.to(device).unsqueeze(1), y_g_hat.detach())
                             
                             # Generator adversarial losses
                             loss_gen_f, _ = generator_loss(y_df_hat_g)
