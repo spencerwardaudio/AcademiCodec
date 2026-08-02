@@ -320,8 +320,13 @@ def train(rank, a, h):
             loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
             loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
             loss_gen_stft, losses_gen_stft = generator_loss(y_stftd_hat_g)
-            loss_gen_all = loss_gen_s + loss_gen_f + loss_gen_stft + loss_fm_s + loss_fm_f + loss_fm_stft + loss_mel + loss_q * 10
+            q_w = getattr(h, 'quantizer_loss_weight', 1.0)
+            loss_gen_all = loss_gen_s + loss_gen_f + loss_gen_stft + loss_fm_s + loss_fm_f + loss_fm_stft + loss_mel + loss_q * q_w
             loss_gen_all.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(encoder.parameters()) + list(generator.parameters()) + list(quantizer.parameters()),
+                max_norm=10.0,
+            )
             optim_g.step()
             if rank == 0:
                 # Track metrics for epoch aggregation

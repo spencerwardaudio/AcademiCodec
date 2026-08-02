@@ -27,6 +27,7 @@
     "n_codes": 1024,
     "codebook_loss_lambda": 1.0,
     "commitment_loss_lambda": 0.25,
+    "quantizer_loss_weight": 1.0,
 
     "fmin": 0,
     "fmax": 8000,
