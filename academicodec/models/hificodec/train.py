@@ -105,7 +105,11 @@ def train(rank, a, h):
         quantizer.load_state_dict(state_dict_g['quantizer'])
         mpd.load_state_dict(state_dict_do['mpd'])
         msd.load_state_dict(state_dict_do['msd'])
-        mstftd.load_state_dict(state_dict_do['mstftd'])
+        try:
+            mstftd.load_state_dict(state_dict_do['mstftd'])
+        except RuntimeError:
+            # checkpoint was saved with msd weights in mstftd slot — reinit
+            print("  [WARN] mstftd checkpoint mismatch — reinitialising from scratch")
         steps = state_dict_do['steps'] + 1
         last_epoch = state_dict_do['epoch']
 
@@ -376,7 +380,7 @@ def train(rank, a, h):
                             'msd': (msd.module
                                     if h.num_gpus > 1 else msd).state_dict(),
                             'mstftd': (mstftd.module
-                                       if h.num_gpus > 1 else msd).state_dict(),
+                                       if h.num_gpus > 1 else mstftd).state_dict(),
                             'optim_g':
                             optim_g.state_dict(),
                             'optim_d':
