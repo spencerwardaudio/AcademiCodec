@@ -228,6 +228,7 @@ def train(rank, a, h):
     else:
         wandb_run = None
     plot_gt_once = False
+    best_val_err = float('inf')
     generator.train()
     encoder.train()
     quantizer.train()
@@ -542,6 +543,26 @@ def train(rank, a, h):
                             }, step=steps)
                         if not plot_gt_once:
                             plot_gt_once = True
+
+                        # Save best-val checkpoint (fixed filenames, bypass rotation logic)
+                        if val_err < best_val_err:
+                            best_val_err = val_err
+                            best_g_path  = "{}/g_best".format(a.checkpoint_path)
+                            best_do_path = "{}/do_best".format(a.checkpoint_path)
+                            torch.save({
+                                'generator': (generator.module if h.num_gpus > 1 else generator).state_dict(),
+                                'encoder':   (encoder.module   if h.num_gpus > 1 else encoder).state_dict(),
+                                'quantizer': (quantizer.module if h.num_gpus > 1 else quantizer).state_dict(),
+                                'val_err': val_err, 'steps': steps, 'epoch': epoch,
+                            }, best_g_path)
+                            torch.save({
+                                'mpd':     (mpd.module     if h.num_gpus > 1 else mpd).state_dict(),
+                                'msd':     (msd.module     if h.num_gpus > 1 else msd).state_dict(),
+                                'mstftd':  (mstftd.module  if h.num_gpus > 1 else mstftd).state_dict(),
+                                'optim_g': optim_g.state_dict(), 'optim_d': optim_d.state_dict(),
+                                'steps': steps, 'epoch': epoch, 'val_err': val_err,
+                            }, best_do_path)
+                            print(f'[BEST] val mel_spec_error {val_err:.4f} at step {steps} — saved g_best, do_best')
 
                     generator.train()
                     encoder.train()
