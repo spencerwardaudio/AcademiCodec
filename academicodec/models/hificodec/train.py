@@ -166,7 +166,7 @@ def train(rank, a, h):
     train_loader = DataLoader(
         trainset,
         num_workers=h.num_workers,
-        shuffle=False,
+        shuffle=train_sampler is None,  # RandomSampler for single-GPU; DistributedSampler handles multi-GPU
         sampler=train_sampler,
         batch_size=h.batch_size,
         pin_memory=True,
